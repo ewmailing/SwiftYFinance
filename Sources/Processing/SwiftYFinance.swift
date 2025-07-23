@@ -28,27 +28,53 @@ public class SwiftYFinance {
     /**
      The headers to use in all requests
      */
-    static var headers: [String: String] = [
-        "Accept": "*/*",
-        "Pragma": "no-cache",
-        "Origin": "https://finance.yahoo.com",
-        "Cache-Control": "no-cache",
-        "Host": "query1.finance.yahoo.com",
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.1.2 Safari/605.1.15",
-        "Accept-Encoding": "gzip, deflate, br"
-    ]
+	// I've had problems in the past with other libraries/languages with some headers not being sufficient for Yahoo.
+	// With this library broken, I started replacing the header with ones I saw still worked.
+	// I think this header comes is one from YahooQuery.
+	static var headers: [String: String] = [
+		"sec-ch-ua": "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
+		"sec-ch-ua-mobile": "?0",
+		"sec-ch-ua-platform": "\"macOS\"",
+		"upgrade-insecure-requests": "1",
+		"user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+		"accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+		"sec-fetch-site": "none",
+		"sec-fetch-mode": "navigate",
+		"sec-fetch-user": "?1",
+		"sec-fetch-dest": "document",
+		"accept-encoding": "gzip, deflate, br, zstd",
+		"accept-language": "en-US,en;q=0.9",
+		"priority": "u=0, i"
+	]
+	
+//	static var headers: [String: String] = [
+//		"Accept": "*/*",
+//		"Pragma": "no-cache",
+//		"Origin": "https://finance.yahoo.com",
+//		"Cache-Control": "no-cache",
+//		"Host": "query1.finance.yahoo.com",
+//		"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.1.2 Safari/605.1.15",
+//		"User-Agent": "Mozilla/5.0",
+//		"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+//		"Accept-Encoding": "gzip, deflate, br"
+//	]
 
     /**
      Session to use in all requests.
      - Note: it is crucial as without httpShouldSetCookies parameter, sometimes, Yahoo sends invalid cookies that are saved. Then, all consequent requests corrupt.
+	 Note: Update: This is not working any more with httpShouldSetCookies false. It needs to be turned on.
+	 Yahoo is using both the cookies and the crumb together. With this off, I can get the crumb, but requests using the crumb will be 'Unauthorized' do to invalid crumb.
+	 If I go to the getcrumb URL at the same time in a web browser, I see a different crumb than the one fetched here (and it persists for awhile hitting refresh),
+	 further indicting that the cookie and crumb are linked at the hip.
+	 Whatever workaround code was doing manually with cookies no longer works.
+	 I don't know enough about the old cookie handling to remove it, so it remains, and could cause other problems.
      */
     static var session: URLSession = {
         let configuration = URLSessionConfiguration.default
-        configuration.httpShouldSetCookies = false
+//		configuration.httpShouldSetCookies = false
+		configuration.httpShouldSetCookies = true
         configuration.requestCachePolicy = .reloadIgnoringCacheData
-        
         configuration.httpCookieStorage?.cookieAcceptPolicy = .always
-        
         return URLSession(configuration: configuration)
     }()
 
@@ -67,12 +93,31 @@ public class SwiftYFinance {
         //
         //        semaphore.wait()
 
+		// I've seen multiple libraries, such as yfinance and YahooQuery use this v1/test/getcrumb URL.
+		// It is nicer because it only has the crumb and there is no extra data, and nothing to parse.
+		let url = URL(string: "https://query2.finance.yahoo.com/v1/test/getcrumb")!
+		// Setting a range of 1d is more efficient than otherwise because a lot less data needs to be sent back.
+//		let url = URL(string: "https://finance.yahoo.com/quote/SPY/history?range=1d")!
+//		let url = URL(string: "https://finance.yahoo.com/quote/SPY/history")!
+
+		var request = URLRequest(url: url)
+//		request.setValue("DEMO-API-KEY", forHTTPHeaderField: "x-api-key")
+		for (key, value) in Self.headers {
+			request.setValue(value, forHTTPHeaderField: key)
+		}
+		
+		
         session
-            .dataTask(with: URL(string: "https://finance.yahoo.com/quote/AAPL/history")!) { data, response, error in
+			// Changed to use a request because when this broke, I was unsure if the lack of headers was the reason for the breakage.
+//			.dataTask(with: URL(string: "https://finance.yahoo.com/quote/AAPL/history")!) { data, response, error in
+//			.dataTask(with: URL(string: "https://finance.yahoo.com/quote/SPY/history?range=1d")!) { data, response, error in
+//			.dataTask(with: URL(string: "https://query2.finance.yahoo.com/quote/v1/test/getcrumb")!) { data, response, error in
+			.dataTask(with: request) { data, response, error in
                 defer {
                     semaphore.signal()
                 }
                 
+				// I'm not sure if this is still correct now that I've turned cookies back on for URLSession.
                 if let httpResponse = response as? HTTPURLResponse {
                     Self.cookies = httpResponse.allHeaderFields["Set-Cookie"] as? String ?? ""
                 }
@@ -85,20 +130,42 @@ public class SwiftYFinance {
                 guard let dataString = dataString else {
                     return
                 }
+				//	print("dateString: \(dataString)")
 
-                let pattern = #""CrumbStore":\{"crumb":"(?<crumb>[^"]+)"\}"#
-                let range = NSRange(location: 0, length: dataString.utf16.count)
-                guard let regex = try? NSRegularExpression(pattern: pattern, options: []),
-                      let match = regex.firstMatch(in: dataString, options: [], range: range),
-                      let rangeData = Range(match.range, in: dataString) else {
-                    return
-                }
-                let crumbStr = String(dataString[rangeData])
+				
+				// NOTE: This block of code is for parsing for the crumb as of this writing.
+				// However, this has broken before due to Yahoo changing things, which is why I'm mucking with this.
+				// So rather than using this code, I'm opting for the test/getcrumb URL solution.
+				// If Yahoo breaks that, the below code could be re-tried, although consider they may break this too at the same time.
+				/*
+				// Yahoo has changed what we need to look for.
+				// let pattern = #""CrumbStore":\{"crumb":"(?<crumb>[^"]+)"\}"#
+				// Need to look for something like this.
+				// "crumb":"aetS0Za7Z/8"
 
-                let wI = NSMutableString(string: crumbStr)
-                CFStringTransform(wI, nil, "Any-Hex/Java" as NSString, true)
-                let decodedStr = wI as String
-                Self.crumb = String(decodedStr.suffix(13).prefix(11))
+				let pattern = #""crumb":\"(.*?)\""# // Captures the text inside the quotes after the colon
+
+				do {
+					let regex = try NSRegularExpression(pattern: pattern)
+					
+					// Find the first match in the string
+					if let match = regex.firstMatch(in: dataString, options: [], range: NSRange(location: 0, length: dataString.utf16.count)) {
+						
+						// Extract the captured group (the string inside the quotes)
+						if let range = Range(match.range(at: 1), in: dataString) {
+							let extractedString = String(dataString[range])
+							print("Extracted string: \(extractedString)") // Output: aetS0Za7Z58
+							Self.crumb = extractedString
+
+						}
+					}
+				} catch {
+					print("Error creating regular expression: \(error)")
+				}
+				 */
+				
+//				print("dataString:\(dataString).") // Output: aetS0Za7Z/8
+				Self.crumb = dataString
             }
             .resume()
 
@@ -383,6 +450,8 @@ public class SwiftYFinance {
             request.setValue(value, forHTTPHeaderField: key)
         }
 
+//		let print_url = request.url
+//		print("request URL \(print_url)")
         session.dataTask(with: request) { data, response, error in
             queue.async {
                 if let error = error {
@@ -584,7 +653,7 @@ public class SwiftYFinance {
             URLQueryItem(name: "includePrePost", value: "true"),
             URLQueryItem(name: "cachecounter", value: String(Self.cacheCounter))
         ]
-        print(urlComponents.url?.absoluteString ?? "No URL provided")
+        // print(urlComponents.url?.absoluteString ?? "No URL provided")
 
         var request = URLRequest(url: urlComponents.url!)
         for (key, value) in Self.headers {
