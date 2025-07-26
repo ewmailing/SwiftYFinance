@@ -441,7 +441,7 @@ public class SwiftYFinance {
             URLQueryItem(name: "includePrePost", value: "true"),
             URLQueryItem(name: "corsDomain", value: "finance.yahoo.com"),
             URLQueryItem(name: ".tsrc", value: "finance"),
-            URLQueryItem(name: "symbols", value: identifier),
+//            URLQueryItem(name: "symbols", value: identifier),
             URLQueryItem(name: "cachecounter", value: String(Self.cacheCounter))
         ]
 
@@ -528,7 +528,7 @@ public class SwiftYFinance {
         urlComponents.path = "/v8/finance/chart/\(identifier)"
         Self.cacheCounter += 1
         urlComponents.queryItems = [
-            URLQueryItem(name: "symbols", value: identifier),
+ //           URLQueryItem(name: "symbols", value: identifier),
             URLQueryItem(name: "symbol", value: identifier),
             URLQueryItem(name: "region", value: "US"),
             URLQueryItem(name: "lang", value: "en-US"),
@@ -644,7 +644,7 @@ public class SwiftYFinance {
         urlComponents.path = "/v8/finance/chart/\(identifier)"
         Self.cacheCounter += 1
         urlComponents.queryItems = [
-            URLQueryItem(name: "symbols", value: identifier),
+//            URLQueryItem(name: "symbols", value: identifier),
             URLQueryItem(name: "symbol", value: identifier),
             URLQueryItem(name: "crumb", value: Self.crumb),
             URLQueryItem(name: "period1", value: String(Int(start.timeIntervalSince1970))),
@@ -797,6 +797,114 @@ public class SwiftYFinance {
 	
 	
 	/**
+	 Fetches the latest quotes for the provided list of identifiers.
+	 This is more efficent than recentDataBy(...) for multiple reasons.
+	 1. This API transmits less data back than recentDataBy because the latter uses the Yahoo chart API which seems to send back a lot of additional historical stuff that this library happens to throw away.
+	 2. This API is designed for submitting multiple identifiers in one request.
+	 Since Yahoo may limit or ban you for too much usage, it is worth considering minimizing your traffic, hence the reason I implemented this API instead of just relying on recentDataBy.
+	 - Parameters:
+	 - identifiers: An array of tickers. Yahoo also seems to support contractSymbols for identifiers. I did not find information as to if there is a hard limit on the number of tickers in the list, but a general warning that Yahoo looks at your overall traffic usage through the combination off all your different requests.
+	 - queue: queue to use for request asyncgtonous processing
+	 - callback: callback, two parameters will be passed
+	 */
+	public class func latestQuotes(identifiers: [String], queue: DispatchQueue = .main, callback: @escaping ([Quote]?, Error?) -> Void) {
+		guard !identifiers.isEmpty else { callback(nil, YFinanceResponseError(message: "Empty identifiers")); return; }
+		for identifier in identifiers {
+			if identifier.trimmingCharacters(in: .whitespacesAndNewlines) == "" {
+				callback(nil, YFinanceResponseError(message: "Empty identifier"))
+				return
+			}
+		}
+		let comma_separated_tickers:String = identifiers.joined(separator: ",")
+
+		Self.prepareCredentials()
+		// https://query2.finance.yahoo.com/v7/finance/quote?symbols=AAPL,MSFT&crumb=4IjOdW3MQPU
+		var urlComponents = URLComponents()
+		urlComponents.scheme = "https"
+		urlComponents.host = "query2.finance.yahoo.com"
+		urlComponents.path = "/v7/finance/quote"
+		Self.cacheCounter += 1
+		urlComponents.queryItems = [
+			URLQueryItem(name: "symbols", value: comma_separated_tickers),
+			URLQueryItem(name: "region", value: "US"),
+			URLQueryItem(name: "lang", value: "en-US"),
+			URLQueryItem(name: "corsDomain", value: "finance.yahoo.com"),
+			URLQueryItem(name: "crumb", value: Self.crumb),
+			URLQueryItem(name: "cachecounter", value: String(Self.cacheCounter))
+		]
+
+		var request = URLRequest(url: urlComponents.url!)
+		for (key, value) in Self.headers {
+			request.setValue(value, forHTTPHeaderField: key)
+		}
+
+//		print("request URL \(request.url)")
+		session.dataTask(with: request) { data, response, error in
+			queue.async {
+				if let error = error {
+					callback(nil, error)
+					return
+				}
+
+				guard let data = data else {
+					callback(nil, YFinanceResponseError(message: "No data received"))
+					return
+				}
+
+				do {
+					let jsonRaw = try JSON(data: data)
+
+					if let errorDesc = jsonRaw["quoteResponse"]["error"]["description"].string {
+						callback(nil, YFinanceResponseError(message: errorDesc))
+						return
+					}
+
+
+
+					// This API only handles one ticker, but it appears the Yahoo API
+					// was structured so it could return an array of ticker results.
+					// We will ignore any extras here.
+					// But make sure there is at least one entry.
+					if jsonRaw["quoteResponse"]["result"].array == nil
+						|| jsonRaw["quoteResponse"]["result"].array!.isEmpty {
+						callback(nil, YFinanceResponseError(message: "No quote data received"))
+						return
+					}
+					
+					var quotes_array:[Quote] = []
+					for quote_element in jsonRaw["quoteResponse"]["result"].array! {
+						let quote = Quote(information: quote_element)
+						quotes_array.append(quote)
+					}
+					
+					callback(quotes_array, nil)
+				} catch {
+					callback(nil, error)
+				}
+			}
+		}.resume()
+	}
+	
+	/**
+	 The same as `SwiftYFinance.latestQuotes(...)` except that it executes synchronously and returns data rather than giving it to the callback.
+	 */
+	public class func latestQuotes(identifiers: [String]) -> ([Quote]?, Error?) {
+		var retData: [Quote]?, retError: Error?
+		let semaphore = DispatchSemaphore(value: 0)
+		self.latestQuotes(identifiers: identifiers, queue: DispatchQueue.global(qos: .utility)) {
+			data, error in
+			defer {
+				semaphore.signal()
+			}
+			retData = data
+			retError = error
+		}
+
+		semaphore.wait()
+		return (retData, retError)
+	}
+	
+	/**
 	 Fetches current options data.
 	 - Warning: Identifier must exist or data will be nil and error will be setten
 	 - Parameters:
@@ -855,15 +963,6 @@ public class SwiftYFinance {
 						callback(nil, YFinanceResponseError(message: errorDesc))
 						return
 					}
-					if let errorDesc = jsonRaw["finance"]["error"]["description"].string {
-						callback(nil, YFinanceResponseError(message: errorDesc))
-						return
-					}
-					if let errorDesc = jsonRaw["quoteSummary"]["error"]["description"].string {
-						callback(nil, YFinanceResponseError(message: errorDesc))
-						return
-					}
-
 
 					// This API only handles one ticker, but it appears the Yahoo API
 					// was structured so it could return an array of ticker results.

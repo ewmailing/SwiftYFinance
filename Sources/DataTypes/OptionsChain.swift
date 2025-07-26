@@ -1,8 +1,8 @@
 //
-//  StockChartData.swift
+//  OptionsChain.swift
 //  SwiftYFinance
 //
-//  Created by Александр Дремов on 12.08.2020.
+//  Created by Eric Wing on 07.24.2025.
 //
 
 import Foundation
@@ -47,7 +47,8 @@ public struct OptionsContract
 		{
 			last_op = nil
 		}
-		
+		self.expiration = makeDateFromIntTimeIntervalOrNil(information:information["expiration"])
+		self.lastTradeDate = makeDateFromIntTimeIntervalOrNil(information:information["lastTradeDate"])
 		self.contractSymbol = information["contractSymbol"].string
 		self.strike = information["strike"].float
 		self.currency = information["currency"].string
@@ -75,10 +76,7 @@ public struct OptionsContractsByExpiry
 	
 	init(information: JSON) {
 		
-		let timestamp = information["expirationDate"].int!
-		let date = Date(timeIntervalSince1970: Double(timestamp))
-		self.expirationDate = date
-		
+		self.expirationDate = makeDateFromIntTimeIntervalOrNil(information:information["expirationDate"])
 		self.hasMiniOptions = information["hasMiniOptions"].bool
 
 		var call_arr: [OptionsContract] = []
@@ -100,243 +98,11 @@ public struct OptionsContractsByExpiry
 	
 }
 
-// This looks very similar to struct Price, but it isn't exact.
-// I don't know if that is because Yahoo changed fields,
-// Price didn't implement all the fields,
-// or if they are just different.
-// Update: I discovered Quote will have different/additional fields if you use the contractSymbol instead of the underlying ticker.
-public struct Quote
-{
-	
-	public var language: String?
-	public var region: String?
-	public var quoteType: String?
-	public var typeDisp: String?
-	public var quoteSourceName: String?
-	public var triggerable: Bool?
-	public var customPriceAlertConfidence: String?
-	public var shortName: String?
-	public var longName: String?
-	public var currency: String?
-	// Don't feel like implementing this one right now.
-	/*
-	public var corporateActions": [
-	  {
-		"header": "Dividend",
-		"message": "MSFT announced a cash dividend of 0.83 with an ex-date of Aug. 21, 2025",
-		"meta": {
-		  "eventType": "DIVIDEND",
-		  "dateEpochMs": 1755748800000,
-		  "amount": "0.83"
-		}
-	  }
-	],
-	*/
-	public var postMarketTime: Date?
-	public var regularMarketTime: Date?
-	public var averageAnalystRating: String?
-	public var tradeable: Bool?
-	public var cryptoTradeable: Bool?
-	public var marketState: String?
-	public var hasPrePostMarketData: Bool?
-	public var firstTradeDateMilliseconds: Int?
-	public var priceHint: Int?
-	public var postMarketChangePercent: Float?
-	public var postMarketPrice: Float?
-	public var postMarketChange: Float?
-	public var regularMarketChange: Float?
-	public var regularMarketDayHigh: Float?
-	public var regularMarketDayRange: String?
-	public var regularMarketDayLow: Float?
-	public var regularMarketVolume: Int?
-	public var regularMarketPreviousClose: Float?
-	public var bid: Float?
-	public var ask: Float?
-	public var bidSize: Int?
-	public var askSize: Int?
-	public var fullExchangeName: String?
-	public var financialCurrency: String?
-	public var regularMarketOpen: Float?
-	public var averageDailyVolume3Month: Int?
-	public var averageDailyVolume10Day: Int?
-	public var fiftyTwoWeekLowChange: Float?
-	public var fiftyTwoWeekLowChangePercent: Float?
-	public var fiftyTwoWeekRange: String?
-	public var fiftyTwoWeekHighChange: Float?
-	public var fiftyTwoWeekHighChangePercent: Float?
-	public var fiftyTwoWeekLow: Float?
-	public var fiftyTwoWeekHigh: Float?
-	public var fiftyTwoWeekChangePercent: Float?
-	public var dividendDate: Date?
-	public var earningsTimestamp: Date?
-	public var earningsTimestampStart: Date?
-	public var earningsTimestampEnd: Date?
-	public var earningsCallTimestampStart: Date?
-	public var earningsCallTimestampEnd: Date?
-	public var isEarningsDateEstimate: Bool?
-	public var trailingAnnualDividendRate: Float?
-	public var trailingPE: Float?
-	public var dividendRate: Float?
-	public var trailingAnnualDividendYield: Float?
-	public var dividendYield: Float?
-	public var epsTrailingTwelveMonths: Float?
-	public var epsForward: Float?
-	public var epsCurrentYear: Float?
-	public var priceEpsCurrentYear: Float?
-	public var sharesOutstanding: Int?
-	public var bookValue: Float?
-	public var fiftyDayAverage: Float?
-	public var fiftyDayAverageChange: Float?
-	public var fiftyDayAverageChangePercent: Float?
-	public var twoHundredDayAverage: Float?
-	public var twoHundredDayAverageChange: Float?
-	public var twoHundredDayAverageChangePercent: Float?
-	public var marketCap: Int?
-	public var forwardPE: Float?
-	public var priceToBook: Float?
-	public var sourceInterval: Float?
-	public var exchangeDataDelayedBy: Int?
-	public var exchange: String?
-	public var messageBoardId: String?
-	public var exchangeTimezoneName: String?
-	public var exchangeTimezoneShortName: String?
-	public var gmtOffSetMilliseconds: Int?
-	public var market: String?
-	public var esgPopulated: Bool?
-	public var regularMarketChangePercent: Float?
-	public var regularMarketPrice: Float?
-	public var displayName: String?
-	public var symbol: String?
-	
-	/*
-	 I discovered that if you query the contractSymbol directly, you get different values back.
-	 See bottom for example.
-	 But the most important are the expiration dates, because you need to know the exact dates if you want to query Yahoo for more info on the options chain.
-	 For example, I would like to get the implied volatility, but that info is not present in this part of the data.
-	 (Although the options price is available in this part,
-	 so, if you can get the dividend yield and underlying price through other means,
-	 you can calculate the implied volatility.)
-	 */
-	public var expireDate: Date?
-//	public var expireIsoDate: Date? // seems redundant
-	
-	init(information: JSON) {
-		
-		self.language = information["language"].string
-		self.region = information["region"].string
-		self.quoteType = information["quoteType"].string
-		self.typeDisp = information["typeDisp"].string
-		self.quoteSourceName = information["quoteSourceName"].string
-		self.triggerable = information["triggerable"].bool
-		self.customPriceAlertConfidence = information["customPriceAlertConfidence"].string
-		self.shortName = information["shortName"].string
-		self.longName = information["longName"].string
-		self.currency = information["currency"].string
-
-		/*
-		self.corporateActions = information["corporateActions"].array [
-		  {
-			"header": "Dividend",
-			"message": "MSFT announced a cash dividend of 0.83 with an ex-date of Aug. 21, 2025",
-			"meta": {
-			  "eventType": "DIVIDEND",
-			  "dateEpochMs": 1755748800000,
-			  "amount": "0.83"
-			}
-		  }
-		],
-		*/
-		
-		self.postMarketTime = Date(timeIntervalSince1970: Double(information["postMarketTime"].int ?? 0))
-		self.regularMarketTime = Date(timeIntervalSince1970: Double(information["regularMarketTime"].int ?? 0))
-		self.averageAnalystRating = information["averageAnalystRating"].string
-		self.tradeable = information["tradeable"].bool
-		self.cryptoTradeable = information["cryptoTradeable"].bool
-		self.marketState = information["marketState"].string
-		self.hasPrePostMarketData = information["hasPrePostMarketData"].bool
-		self.firstTradeDateMilliseconds = information["firstTradeDateMilliseconds"].int
-		self.priceHint = information["priceHint"].int
-		self.postMarketChangePercent = information["postMarketChangePercent"].float
-		self.postMarketPrice = information["postMarketPrice"].float
-		self.postMarketChange = information["postMarketChange"].float
-		self.regularMarketChange = information["regularMarketChange"].float
-		self.regularMarketDayHigh = information["regularMarketDayHigh"].float
-		self.regularMarketDayRange = information["regularMarketDayRange"].string
-		self.regularMarketDayLow = information["regularMarketDayLow"].float
-		self.regularMarketVolume = information["regularMarketVolume"].int
-		self.regularMarketPreviousClose = information["regularMarketPreviousClose"].float
-		self.bid = information["bid"].float
-		self.ask = information["ask"].float
-		self.bidSize = information["bidSize"].int
-		self.askSize = information["askSize"].int
-		self.fullExchangeName = information["fullExchangeName"].string
-		self.financialCurrency = information["financialCurrency"].string
-		self.regularMarketOpen = information["regularMarketOpen"].float
-		self.averageDailyVolume3Month = information["averageDailyVolume3Month"].int
-		self.averageDailyVolume10Day = information["averageDailyVolume10Day"].int
-		self.fiftyTwoWeekLowChange = information["fiftyTwoWeekLowChange"].float
-		self.fiftyTwoWeekLowChangePercent = information["fiftyTwoWeekLowChangePercent"].float
-		self.fiftyTwoWeekRange = information["fiftyTwoWeekRange"].string
-		self.fiftyTwoWeekHighChange = information["fiftyTwoWeekHighChange"].float
-		self.fiftyTwoWeekHighChangePercent = information["fiftyTwoWeekHighChangePercent"].float
-		self.fiftyTwoWeekLow = information["fiftyTwoWeekLow"].float
-		self.fiftyTwoWeekHigh = information["fiftyTwoWeekHigh"].float
-		self.fiftyTwoWeekChangePercent = information["fiftyTwoWeekChangePercent"].float
-		self.dividendDate = Date(timeIntervalSince1970: Double(information["dividendDate"].int ?? 0))
-		self.earningsTimestamp = Date(timeIntervalSince1970: Double(information["earningsTimestamp"].int ?? 0))
-		self.earningsTimestampStart = Date(timeIntervalSince1970: Double(information["earningsTimestampStart"].int ?? 0))
-		self.earningsTimestampEnd = Date(timeIntervalSince1970: Double(information["earningsTimestampEnd"].int ?? 0))
-		self.earningsCallTimestampStart = Date(timeIntervalSince1970: Double(information["earningsCallTimestampStart"].int ?? 0))
-		self.earningsCallTimestampEnd = Date(timeIntervalSince1970: Double(information["earningsCallTimestampEnd"].int ?? 0))
-		self.isEarningsDateEstimate = information["isEarningsDateEstimate"].bool
-		self.trailingAnnualDividendRate = information["trailingAnnualDividendRate"].float
-		self.trailingPE = information["trailingPE"].float
-		self.dividendRate = information["dividendRate"].float
-		self.trailingAnnualDividendYield = information["trailingAnnualDividendYield"].float
-		self.dividendYield = information["dividendYield"].float
-		self.epsTrailingTwelveMonths = information["epsTrailingTwelveMonths"].float
-		self.epsForward = information["epsForward"].float
-		self.epsCurrentYear = information["epsCurrentYear"].float
-		self.priceEpsCurrentYear = information["priceEpsCurrentYear"].float
-		self.sharesOutstanding = information["sharesOutstanding"].int
-		self.bookValue = information["bookValue"].float
-		self.fiftyDayAverage = information["fiftyDayAverage"].float
-		self.fiftyDayAverageChange = information["fiftyDayAverageChange"].float
-		self.fiftyDayAverageChangePercent = information["fiftyDayAverageChangePercent"].float
-		self.twoHundredDayAverage = information["twoHundredDayAverage"].float
-		self.twoHundredDayAverageChange = information["twoHundredDayAverageChange"].float
-		self.twoHundredDayAverageChangePercent = information["twoHundredDayAverageChangePercent"].float
-		self.marketCap = information["marketCap"].int
-		self.forwardPE = information["forwardPE"].float
-		self.priceToBook = information["priceToBook"].float
-		self.sourceInterval = information["sourceInterval"].float
-		self.exchangeDataDelayedBy = information["exchangeDataDelayedBy"].int
-		self.exchange = information["exchange"].string
-		self.messageBoardId = information["messageBoardId"].string
-		self.exchangeTimezoneName = information["exchangeTimezoneName"].string
-		self.exchangeTimezoneShortName = information["exchangeTimezoneShortName"].string
-		self.gmtOffSetMilliseconds = information["gmtOffSetMilliseconds"].int
-		self.market = information["market"].string
-		self.esgPopulated = information["esgPopulated"].bool
-		self.regularMarketChangePercent = information["regularMarketChangePercent"].float
-		self.regularMarketPrice = information["regularMarketPrice"].float
-		self.displayName = information["displayName"].string
-		self.symbol = information["symbol"].string
-
-		// For when an options contractSymbol is given as the identifer instead of the underlying ticker.
-		if let expire_date_timestamp = information["expireDate"].int
-		{
-			self.expireDate = Date(timeIntervalSince1970: Double(expire_date_timestamp))
-		}
-
-
-	}
-}
 
 public struct OptionsChain {
 	public var underlyingSymbol: String?
-	public var expirationDates: [Date]
-	public var strikes: [Float]
+	public var expirationDates: [Date?]
+	public var strikes: [Float?]
 	public var hasMiniOptions: Bool?
 
 	public var quote: Quote?
@@ -349,17 +115,16 @@ public struct OptionsChain {
 		
 		self.underlyingSymbol = information["underlyingSymbol"].string
 
-		var exp_dates: [Date] = []
+		var exp_dates: [Date?] = []
 		for exp in information["expirationDates"].array! {
-			let timestamp = exp.int!
-			let date = Date(timeIntervalSince1970: Double(timestamp))
+			let date = makeDateFromIntTimeIntervalOrNil(information:exp)
 			exp_dates.append(date)
 		}
 		self.expirationDates = exp_dates
 		
-		var stike_arr: [Float] = []
+		var stike_arr: [Float?] = []
 		for val in information["strikes"].array! {
-			let strike = val.float!
+			let strike = val.float
 			stike_arr.append(strike)
 		}
 		self.strikes = stike_arr
@@ -373,9 +138,12 @@ public struct OptionsChain {
 		
 		
 		var options_contracts_by_expiry: [OptionsContractsByExpiry] = []
-		for val in information["options"].array! {
-			let contract = OptionsContractsByExpiry(information: val)
-			options_contracts_by_expiry.append(contract)
+		if let options_arr = information["options"].array
+		{
+			for val in options_arr {
+				let contract = OptionsContractsByExpiry(information: val)
+				options_contracts_by_expiry.append(contract)
+			}
 		}
 		self.options = options_contracts_by_expiry
 		
@@ -7628,3 +7396,4 @@ public struct OptionsChain {
 	}
  }
  */
+
