@@ -407,7 +407,7 @@ public class SwiftYFinance {
     public class func syncSummaryDataBy(identifier: String, selection: QuoteSummarySelection = .supported) -> (IdentifierSummary?, Error?) {
         self.syncSummaryDataBy(identifier: identifier, selection: [selection])
     }
-
+	
     /**
      Fetches summary information about identifier.
      - Warning: Identifier must exist or data will be nil and error will be setten
@@ -793,4 +793,217 @@ public class SwiftYFinance {
         semaphore.wait()
         return (retData, retError)
     }
+	
+	
+	
+	/**
+	 Fetches current options data.
+	 - Warning: Identifier must exist or data will be nil and error will be setten
+	 - Parameters:
+	 - identifier: ticker of underlying identifier or the contractSymbol
+	 - expirationDate: Specifying the date will specify the options chain that matches this expiry. It must be an exact match for Yahoo or you will get an empty options chain, but it will still provide the array of expiration dates so you can do a second lookup using those dates. If you pass nil, Yahoo provides you a default options chain which appears to be of the closest expiration. Specifying a date while passing the contractSymbol as the identifer (instead of the underlying) probably doesn't do  anything useful.
+	 - queue: queue to use for request asyncgtonous processing
+	 - callback: callback, two parameters will be passed
+	 */
+	public class func optionsChain(identifier: String, expirationDate:Date? = nil, queue: DispatchQueue = .main, callback: @escaping (OptionsChain?, Error?) -> Void) {
+		if identifier.trimmingCharacters(in: .whitespacesAndNewlines) == "" {
+			callback(nil, YFinanceResponseError(message: "Empty identifier"))
+			return
+		}
+
+		Self.prepareCredentials()
+		var urlComponents = URLComponents()
+		urlComponents.scheme = "https"
+		urlComponents.host = "query2.finance.yahoo.com"
+		urlComponents.path = "/v7/finance/options/\(identifier)"
+		Self.cacheCounter += 1
+		urlComponents.queryItems = [
+			URLQueryItem(name: "region", value: "US"),
+			URLQueryItem(name: "lang", value: "en-US"),
+			URLQueryItem(name: "corsDomain", value: "finance.yahoo.com"),
+			URLQueryItem(name: "crumb", value: Self.crumb),
+			URLQueryItem(name: "cachecounter", value: String(Self.cacheCounter))
+		]
+		
+		if expirationDate != nil {
+			let val = String(Int(expirationDate!.timeIntervalSince1970))
+			urlComponents.queryItems?.append(URLQueryItem(name: "date", value: val))
+		}
+
+		var request = URLRequest(url: urlComponents.url!)
+		for (key, value) in Self.headers {
+			request.setValue(value, forHTTPHeaderField: key)
+		}
+
+//		print("request URL \(request.url)")
+		session.dataTask(with: request) { data, response, error in
+			queue.async {
+				if let error = error {
+					callback(nil, error)
+					return
+				}
+
+				guard let data = data else {
+					callback(nil, YFinanceResponseError(message: "No data received"))
+					return
+				}
+
+				do {
+					let jsonRaw = try JSON(data: data)
+
+					if let errorDesc = jsonRaw["optionChain"]["error"]["description"].string {
+						callback(nil, YFinanceResponseError(message: errorDesc))
+						return
+					}
+					if let errorDesc = jsonRaw["finance"]["error"]["description"].string {
+						callback(nil, YFinanceResponseError(message: errorDesc))
+						return
+					}
+					if let errorDesc = jsonRaw["quoteSummary"]["error"]["description"].string {
+						callback(nil, YFinanceResponseError(message: errorDesc))
+						return
+					}
+
+
+					// This API only handles one ticker, but it appears the Yahoo API
+					// was structured so it could return an array of ticker results.
+					// We will ignore any extras here.
+					// But make sure there is at least one entry.
+					if jsonRaw["optionChain"]["result"].array == nil
+						|| jsonRaw["optionChain"]["result"].array!.isEmpty {
+						callback(nil, YFinanceResponseError(message: "No options data received"))
+						return
+					}
+					
+					callback(OptionsChain(information: jsonRaw["optionChain"]["result"][0]), nil)
+				} catch {
+					callback(nil, error)
+				}
+			}
+		}.resume()
+	}
+	/**
+	 The same as `SwiftYFinance.optionsChain(...)` except that it executes synchronously and returns data rather than giving it to the callback.
+	 */
+	public class func optionsChain(identifier: String, expirationDate:Date? = nil) -> (OptionsChain?, Error?) {
+		var retData: OptionsChain?, retError: Error?
+		let semaphore = DispatchSemaphore(value: 0)
+		self.optionsChain(identifier: identifier, expirationDate: expirationDate, queue: DispatchQueue.global(qos: .utility)) {
+			data, error in
+			defer {
+				semaphore.signal()
+			}
+			retData = data
+			retError = error
+		}
+
+		semaphore.wait()
+		return (retData, retError)
+	}
+	
+	/**
+	 Fetches current options data if you know the contractSymbol. This version gives you the most data in a one-shot query, as it gives you information about both the option (e.g. price & implied volatility) and the underlying (e.g. price & dividend yieild).
+	 - Warning: Identifier must exist or data will be nil and error will be setten
+	 - Parameters:
+	 - identifier: ticker of underlying identifier or the contractSymbol, e.g. SPY
+	 - contractSymbol: the canonical form of the options symbol, e.g. SPY250728C00565000
+	 - queue: queue to use for request asyncgtonous processing
+	 - callback: callback, two parameters will be passed
+	 */
+	public class func optionsChain(underlyingIdentifier: String, contractSymbol:String, queue: DispatchQueue = .main, callback: @escaping (OptionsChain?, Error?) -> Void) {
+		if underlyingIdentifier.trimmingCharacters(in: .whitespacesAndNewlines) == "" {
+			callback(nil, YFinanceResponseError(message: "Empty identifier"))
+			return
+		}
+		if contractSymbol.trimmingCharacters(in: .whitespacesAndNewlines) == "" {
+			callback(nil, YFinanceResponseError(message: "Empty contractSymbol"))
+			return
+		}
+		
+		Self.prepareCredentials()
+		var urlComponents = URLComponents()
+		urlComponents.scheme = "https"
+		urlComponents.host = "query2.finance.yahoo.com"
+		urlComponents.path = "/v7/finance/options/\(underlyingIdentifier)"
+		Self.cacheCounter += 1
+		urlComponents.queryItems = [
+			URLQueryItem(name: "region", value: "US"),
+			URLQueryItem(name: "lang", value: "en-US"),
+			URLQueryItem(name: "corsDomain", value: "finance.yahoo.com"),
+			URLQueryItem(name: "crumb", value: Self.crumb),
+			URLQueryItem(name: "cachecounter", value: String(Self.cacheCounter)),
+			URLQueryItem(name: "contractSymbol", value: contractSymbol)
+		]
+		
+		var request = URLRequest(url: urlComponents.url!)
+		for (key, value) in Self.headers {
+			request.setValue(value, forHTTPHeaderField: key)
+		}
+
+//		print("request URL \(request.url)")
+		session.dataTask(with: request) { data, response, error in
+			queue.async {
+				if let error = error {
+					callback(nil, error)
+					return
+				}
+
+				guard let data = data else {
+					callback(nil, YFinanceResponseError(message: "No data received"))
+					return
+				}
+
+				do {
+					let jsonRaw = try JSON(data: data)
+
+					if let errorDesc = jsonRaw["optionChain"]["error"]["description"].string {
+						callback(nil, YFinanceResponseError(message: errorDesc))
+						return
+					}
+					if let errorDesc = jsonRaw["finance"]["error"]["description"].string {
+						callback(nil, YFinanceResponseError(message: errorDesc))
+						return
+					}
+					if let errorDesc = jsonRaw["quoteSummary"]["error"]["description"].string {
+						callback(nil, YFinanceResponseError(message: errorDesc))
+						return
+					}
+
+
+					// This API only handles one ticker, but it appears the Yahoo API
+					// was structured so it could return an array of ticker results.
+					// We will ignore any extras here.
+					// But make sure there is at least one entry.
+					if jsonRaw["optionChain"]["result"].array == nil
+						|| jsonRaw["optionChain"]["result"].array!.isEmpty {
+						callback(nil, YFinanceResponseError(message: "No options data received"))
+						return
+					}
+					
+					callback(OptionsChain(information: jsonRaw["optionChain"]["result"][0]), nil)
+				} catch {
+					callback(nil, error)
+				}
+			}
+		}.resume()
+	}
+	/**
+	 The same as `SwiftYFinance.optionsChain(...)` except that it executes synchronously and returns data rather than giving it to the callback.
+	 */
+	public class func optionsChain(underlyingIdentifier: String, contractSymbol:String) -> (OptionsChain?, Error?) {
+		var retData: OptionsChain?, retError: Error?
+		let semaphore = DispatchSemaphore(value: 0)
+		self.optionsChain(underlyingIdentifier: underlyingIdentifier, contractSymbol: contractSymbol, queue: DispatchQueue.global(qos: .utility)) {
+			data, error in
+			defer {
+				semaphore.signal()
+			}
+			retData = data
+			retError = error
+		}
+
+		semaphore.wait()
+		return (retData, retError)
+	}
+	
 }
