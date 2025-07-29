@@ -838,7 +838,7 @@ public class SwiftYFinance {
 			request.setValue(value, forHTTPHeaderField: key)
 		}
 
-//		print("request URL \(request.url)")
+		print("request URL \(request.url)")
 		session.dataTask(with: request) { data, response, error in
 			queue.async {
 				if let error = error {
@@ -902,6 +902,72 @@ public class SwiftYFinance {
 
 		semaphore.wait()
 		return (retData, retError)
+	}
+	/**
+	 The same as `SwiftYFinance.latestQuotes(...)`except async for Swift 6 concurrency.
+	 */
+	public class func latestQuotes(identifiers: [String]) async throws -> [Quote] {
+		guard !identifiers.isEmpty else { throw YFinanceResponseError(message: "Empty identifiers"); }
+		for identifier in identifiers {
+			if identifier.trimmingCharacters(in: .whitespacesAndNewlines) == "" {
+				//callback(nil, YFinanceResponseError(message: "Empty identifier"))
+				throw YFinanceResponseError(message: "Empty identifier")
+//				return nil
+			}
+		}
+		let comma_separated_tickers:String = identifiers.joined(separator: ",")
+
+		Self.prepareCredentials()
+		// https://query2.finance.yahoo.com/v7/finance/quote?symbols=AAPL,MSFT&crumb=4IjOdW3MQPU
+		var urlComponents = URLComponents()
+		urlComponents.scheme = "https"
+		urlComponents.host = "query2.finance.yahoo.com"
+		urlComponents.path = "/v7/finance/quote"
+		Self.cacheCounter += 1
+		urlComponents.queryItems = [
+			URLQueryItem(name: "symbols", value: comma_separated_tickers),
+			URLQueryItem(name: "region", value: "US"),
+			URLQueryItem(name: "lang", value: "en-US"),
+			URLQueryItem(name: "corsDomain", value: "finance.yahoo.com"),
+			URLQueryItem(name: "crumb", value: Self.crumb),
+			URLQueryItem(name: "cachecounter", value: String(Self.cacheCounter))
+		]
+
+		var request = URLRequest(url: urlComponents.url!)
+		for (key, value) in Self.headers {
+			request.setValue(value, forHTTPHeaderField: key)
+		}
+
+//		print("request URL \(request.url)")
+		let (data, response) = try await URLSession.shared.data(for: request)
+/*
+		guard let data = data else {
+			throw YFinanceResponseError(message: "No data received")
+			return nil
+		}
+	*/
+		let jsonRaw = try JSON(data: data)
+
+		if let errorDesc = jsonRaw["quoteResponse"]["error"]["description"].string {
+			throw YFinanceResponseError(message: errorDesc)
+//			return nil
+		}
+		// This API only handles one ticker, but it appears the Yahoo API
+		// was structured so it could return an array of ticker results.
+		// We will ignore any extras here.
+		// But make sure there is at least one entry.
+		if jsonRaw["quoteResponse"]["result"].array == nil
+			|| jsonRaw["quoteResponse"]["result"].array!.isEmpty {
+			throw YFinanceResponseError(message: "No quote data received")
+//			return nil
+		}
+		
+		var quotes_array:[Quote] = []
+		for quote_element in jsonRaw["quoteResponse"]["result"].array! {
+			let quote = Quote(information: quote_element)
+			quotes_array.append(quote)
+		}
+		return quotes_array
 	}
 	
 	/**
@@ -998,6 +1064,61 @@ public class SwiftYFinance {
 
 		semaphore.wait()
 		return (retData, retError)
+	}
+	/**
+	 The same as `SwiftYFinance.optionsChain(...)` except async for Swift 6 concurrency.
+	 */
+	public class func optionsChain(identifier: String, expirationDate:Date?) async throws -> OptionsChain? {
+		if identifier.trimmingCharacters(in: .whitespacesAndNewlines) == "" {
+			throw YFinanceResponseError(message: "Empty identifier")
+//			return
+		}
+
+		Self.prepareCredentials()
+		var urlComponents = URLComponents()
+		urlComponents.scheme = "https"
+		urlComponents.host = "query2.finance.yahoo.com"
+		urlComponents.path = "/v7/finance/options/\(identifier)"
+		Self.cacheCounter += 1
+		urlComponents.queryItems = [
+			URLQueryItem(name: "region", value: "US"),
+			URLQueryItem(name: "lang", value: "en-US"),
+			URLQueryItem(name: "corsDomain", value: "finance.yahoo.com"),
+			URLQueryItem(name: "crumb", value: Self.crumb),
+			URLQueryItem(name: "cachecounter", value: String(Self.cacheCounter))
+		]
+		
+		if expirationDate != nil {
+			let val = String(Int(expirationDate!.timeIntervalSince1970))
+			urlComponents.queryItems?.append(URLQueryItem(name: "date", value: val))
+		}
+
+		var request = URLRequest(url: urlComponents.url!)
+		for (key, value) in Self.headers {
+			request.setValue(value, forHTTPHeaderField: key)
+		}
+
+//		print("request URL \(request.url)")
+		let (data, response) = try await URLSession.shared.data(for: request)
+		
+		
+		let jsonRaw = try JSON(data: data)
+
+		if let errorDesc = jsonRaw["optionChain"]["error"]["description"].string {
+			throw YFinanceResponseError(message: errorDesc)
+//			return
+		}
+
+		// This API only handles one ticker, but it appears the Yahoo API
+		// was structured so it could return an array of ticker results.
+		// We will ignore any extras here.
+		// But make sure there is at least one entry.
+		if jsonRaw["optionChain"]["result"].array == nil
+			|| jsonRaw["optionChain"]["result"].array!.isEmpty {
+			throw YFinanceResponseError(message: "No options data received")
+//			return
+		}
+		return OptionsChain(information: jsonRaw["optionChain"]["result"][0])
 	}
 	
 	/**
@@ -1105,4 +1226,57 @@ public class SwiftYFinance {
 		return (retData, retError)
 	}
 	
+	/**
+	 The same as `SwiftYFinance.optionsChain(...)` except async for Swift 6 concurrency.
+	 */
+	public class func optionsChain(underlyingIdentifier: String, contractSymbol:String) async throws -> OptionsChain? {
+		if underlyingIdentifier.trimmingCharacters(in: .whitespacesAndNewlines) == "" {
+			throw YFinanceResponseError(message: "Empty identifier")
+		}
+		if contractSymbol.trimmingCharacters(in: .whitespacesAndNewlines) == "" {
+			throw YFinanceResponseError(message: "Empty contractSymbol")
+		}
+		
+		Self.prepareCredentials()
+		var urlComponents = URLComponents()
+		urlComponents.scheme = "https"
+		urlComponents.host = "query2.finance.yahoo.com"
+		urlComponents.path = "/v7/finance/options/\(underlyingIdentifier)"
+		Self.cacheCounter += 1
+		urlComponents.queryItems = [
+			URLQueryItem(name: "region", value: "US"),
+			URLQueryItem(name: "lang", value: "en-US"),
+			URLQueryItem(name: "corsDomain", value: "finance.yahoo.com"),
+			URLQueryItem(name: "crumb", value: Self.crumb),
+			URLQueryItem(name: "cachecounter", value: String(Self.cacheCounter)),
+			URLQueryItem(name: "contractSymbol", value: contractSymbol)
+		]
+		
+		var request = URLRequest(url: urlComponents.url!)
+		for (key, value) in Self.headers {
+			request.setValue(value, forHTTPHeaderField: key)
+		}
+
+//		print("request URL \(request.url)")
+		let (data, response) = try await URLSession.shared.data(for: request)
+		
+		
+		let jsonRaw = try JSON(data: data)
+
+		if let errorDesc = jsonRaw["optionChain"]["error"]["description"].string {
+			throw YFinanceResponseError(message: errorDesc)
+//			return
+		}
+
+		// This API only handles one ticker, but it appears the Yahoo API
+		// was structured so it could return an array of ticker results.
+		// We will ignore any extras here.
+		// But make sure there is at least one entry.
+		if jsonRaw["optionChain"]["result"].array == nil
+			|| jsonRaw["optionChain"]["result"].array!.isEmpty {
+			throw YFinanceResponseError(message: "No options data received")
+//			return
+		}
+		return OptionsChain(information: jsonRaw["optionChain"]["result"][0])
+	}
 }
