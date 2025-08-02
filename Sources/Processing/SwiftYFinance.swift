@@ -734,6 +734,74 @@ public class SwiftYFinance {
         return (retData, retError)
     }
 
+	/**
+	 The same as `SwiftYFinance.chartDataBy(...)` except async for Swift 6 concurrency.
+	 */
+	public class func chartDataBy(identifier: String, start: Date = Date(), end: Date = Date(), interval: ChartTimeInterval = .oneday) async throws -> [StockChartData]? {
+		if identifier.trimmingCharacters(in: .whitespacesAndNewlines) == "" {
+			throw YFinanceResponseError(message: "Empty identifier")
+		}
+
+		Self.prepareCredentials()
+		var urlComponents = URLComponents()
+		urlComponents.scheme = "https"
+		urlComponents.host = "query1.finance.yahoo.com"
+		urlComponents.path = "/v8/finance/chart/\(identifier)"
+		Self.cacheCounter += 1
+		urlComponents.queryItems = [
+//            URLQueryItem(name: "symbols", value: identifier),
+			URLQueryItem(name: "symbol", value: identifier),
+			URLQueryItem(name: "crumb", value: Self.crumb),
+			URLQueryItem(name: "period1", value: String(Int(start.timeIntervalSince1970))),
+			URLQueryItem(name: "period2", value: String(Int(end.timeIntervalSince1970))),
+			URLQueryItem(name: "interval", value: interval.rawValue),
+			URLQueryItem(name: "includePrePost", value: "true"),
+			URLQueryItem(name: "cachecounter", value: String(Self.cacheCounter))
+		]
+		// print(urlComponents.url?.absoluteString ?? "No URL provided")
+
+		var request = URLRequest(url: urlComponents.url!)
+		for (key, value) in Self.headers {
+			request.setValue(value, forHTTPHeaderField: key)
+		}
+//		print("request URL \(request.url)")
+		let (data, response) = try await URLSession.shared.data(for: request)
+
+		let json = try JSON(data: data)
+		
+		if let errorDesc = json["chart"]["error"]["description"].string {
+			throw YFinanceResponseError(message: errorDesc)
+		}
+		if let errorDesc = json["finance"]["error"]["description"].string {
+			throw YFinanceResponseError(message: errorDesc)
+		}
+
+		guard let fullData = json["chart"]["result"][0].dictionary,
+			  let quote = fullData["indicators"]?["quote"][0].dictionary,
+			  let timestamps = fullData["timestamp"]?.array else {
+			throw YFinanceResponseError(message: "Invalid response format")
+		}
+
+		let adjClose = fullData["indicators"]?["adjclose"][0]["adjclose"].array
+
+		var result: [StockChartData] = []
+
+		for reading in 0..<timestamps.count {
+			guard let timestamp = timestamps[reading].float else { continue }
+			
+			result.append(StockChartData(
+				date: Date(timeIntervalSince1970: Double(timestamp)),
+				volume: quote["volume"]?[reading].int,
+				open: quote["open"]?[reading].float,
+				close: quote["close"]?[reading].float,
+				adjclose: adjClose?[reading].float,
+				low: quote["low"]?[reading].float,
+				high: quote["high"]?[reading].float)
+			)
+		}
+		return result
+	}
+	
     /**
      Fetches chart data at moment or the closest one from the past.
      - Warning: Identifier must exist or data will be nil and error will be setten
@@ -793,7 +861,44 @@ public class SwiftYFinance {
         semaphore.wait()
         return (retData, retError)
     }
-	
+	/**
+	 The same as `SwiftYFinance.recentChartDataAtMoment(...)` except async for Swift 6 concurrency.
+	 */
+	public class func recentChartDataAtMoment(identifier: String, moment: Date = Date(), futureMargin: TimeInterval = 0) async throws -> StockChartData? {
+		let momentWithMargin = Date(timeIntervalSince1970: moment.timeIntervalSince1970 + futureMargin)
+		
+		var data:[StockChartData]?
+		do
+		{
+			var data1 = try await SwiftYFinance.chartDataBy(identifier: identifier, start: Date(timeIntervalSince1970: momentWithMargin.timeIntervalSince1970 - 7 * 24 * 60 * 60 + futureMargin), end: momentWithMargin, interval: .oneminute)
+			data = data1
+		}
+		catch
+		{
+			// keep going because we're going to try again.
+		}
+		if data == nil {
+			data = try await SwiftYFinance.chartDataBy(identifier: identifier, start: Date(timeIntervalSince1970: momentWithMargin.timeIntervalSince1970 - 7 * 24 * 60 * 60 + futureMargin), end: momentWithMargin, interval: .oneday)
+		}
+
+		// If chartDataBy already throws the errors, we don't need to throw any here.
+		if data == nil
+		{
+			return nil
+		}
+		else if data!.isEmpty
+		{
+			return nil
+		}
+		
+		var i = data!.count - 1
+		var selectedForReturn: StockChartData = data![data!.count - 1]
+		while selectedForReturn.close == nil && selectedForReturn.open == nil && i > 0 {
+			i -= 1
+			selectedForReturn = data![i]
+		}
+		return selectedForReturn
+	}
 	
 	
 	/**
